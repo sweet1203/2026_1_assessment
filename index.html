@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>수행평가 점수 조회</title>
+<style>
+  :root { --bg:#f4f6fb; --card:#fff; --line:#e4e8f0; --ink:#1f2937; --sub:#6b7280;
+          --brand:#3b5bdb; --brand2:#edf0fe; --good:#0ca678; --warn:#e8590c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+         line-height:1.6; padding:24px 14px 60px; }
+  .wrap { max-width:760px; margin:0 auto; }
+  h1 { font-size:22px; margin:8px 0 4px; text-align:center; }
+  .lead { text-align:center; color:var(--sub); font-size:14px; margin-bottom:22px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+          padding:20px; box-shadow:0 1px 3px rgba(0,0,0,.04); margin-bottom:16px; }
+  label { display:block; font-size:13px; color:var(--sub); margin:10px 0 4px; font-weight:600; }
+  input { width:100%; padding:12px 14px; font-size:16px; border:1px solid var(--line);
+          border-radius:10px; background:#fafbff; }
+  input:focus { outline:none; border-color:var(--brand); background:#fff; }
+  button { width:100%; margin-top:18px; padding:13px; font-size:16px; font-weight:700;
+           color:#fff; background:var(--brand); border:0; border-radius:10px; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:default; }
+  .msg { margin-top:12px; font-size:14px; text-align:center; min-height:20px; }
+  .msg.err { color:var(--warn); }
+  .hint { font-size:12px; color:var(--sub); margin-top:14px; text-align:center; }
+  .who { font-size:15px; color:var(--sub); }
+  .who b { color:var(--ink); font-size:18px; }
+  .subject { display:inline-block; background:var(--brand2); color:var(--brand);
+             font-weight:700; font-size:13px; padding:4px 12px; border-radius:20px; margin-bottom:6px; }
+  .round { border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:14px; }
+  .round h3 { margin:0 0 10px; font-size:16px; display:flex; justify-content:space-between; align-items:baseline; }
+  .total { font-size:15px; }
+  .total b { font-size:20px; color:var(--brand); }
+  table.sc { width:100%; border-collapse:collapse; margin:6px 0 12px; font-size:14px; }
+  table.sc td { padding:7px 10px; border-bottom:1px dashed var(--line); }
+  table.sc td:last-child { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }
+  .blk { margin-top:10px; }
+  .blk .bt { font-size:12px; font-weight:700; color:var(--sub); margin-bottom:3px; }
+  .ans { background:#fafbff; border:1px solid var(--line); border-radius:8px; padding:9px 11px; margin-bottom:7px; font-size:14px; }
+  .ans .q { font-size:12px; color:var(--brand); font-weight:700; display:block; margin-bottom:2px; }
+  .reason { background:#fff8f1; border:1px solid #ffe2c7; border-radius:8px; padding:9px 11px; font-size:13px; color:#7a4a16; white-space:pre-wrap; }
+  .reason.ok { background:#ecfdf5; border-color:#bbf7d0; color:#065f46; }
+  .confirm-btn { background:var(--good); }
+  .confirm-btn.done { background:#dcfce7; color:#065f46; cursor:default; }
+  .confirm-stat { font-size:13px; color:var(--good); margin-top:8px; min-height:18px; text-align:center; font-weight:600; }
+  .notice { margin-top:16px; padding:12px; text-align:center; font-size:14px; font-weight:700;
+            color:#7a4a16; background:#fff8f1; border:1px solid #ffe2c7; border-radius:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📊 수행평가 점수 조회</h1>
+  <div class="lead">학번 · 이름 · 개인 비밀번호를 입력하세요. <b>본인 점수만</b> 조회됩니다.</div>
+
+  <div id="login" class="card">
+    <label>학번</label>
+    <input id="hak" inputmode="numeric" autocomplete="off" placeholder="예: 30109">
+    <label>이름</label>
+    <input id="nm" autocomplete="off" placeholder="예: 홍길동">
+    <label>비밀번호</label>
+    <input id="pw" type="password" autocomplete="off" placeholder="배부받은 개인 비밀번호">
+    <button id="go">조회하기</button>
+    <div id="msg" class="msg"></div>
+    <div class="hint">비밀번호는 선생님이 개별 배부한 것입니다. 분실 시 선생님께 문의하세요.</div>
+  </div>
+
+  <div id="result" style="display:none"></div>
+</div>
+
+<script src="config.js"></script>
+<script>
+let DB = null;
+let CUR = null;            // 현재 조회된 학생 {학번, 이름, 과목}
+const LOG_URL = (window.CONFIG && window.CONFIG.logUrl) || "";
+const $ = (id) => document.getElementById(id);
+const b64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function load() {
+  try { DB = await (await fetch("data.json", {cache:"no-store"})).json(); }
+  catch { $("msg").textContent = "데이터를 불러오지 못했습니다."; $("msg").className = "msg err"; }
+}
+load();
+
+async function decrypt(hak, nm, pw) {
+  const blob = DB.recs[hak];
+  if (!blob) return null;
+  const e = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey("raw", e.encode(pw + "|" + hak + "|" + nm), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey(
+    { name:"PBKDF2", salt:b64(blob.s), iterations:DB.iter, hash:"SHA-256" },
+    baseKey, { name:"AES-GCM", length:256 }, false, ["decrypt"]);
+  const pt = await crypto.subtle.decrypt({ name:"AES-GCM", iv:b64(blob.i) }, key, b64(blob.c));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function render(r, hak) {
+  CUR = { 학번: hak, 이름: r.이름, 과목: r.과목 };
+  const rounds = r.수행.map(a => {
+    const rows = a.영역.filter(x => x[1] != null)
+      .map(x => `<tr><td>${esc(x[0])}</td><td>${esc(x[1])}점</td></tr>`).join("");
+    const ans = a.답안.map(p =>
+      `<div class="ans"><span class="q">${esc(p[0])}</span>${esc(p[1])}</div>`).join("");
+    const reasonOK = !a.사유 || /양호|모두 충족/.test(a.사유);
+    const reason = a.사유
+      ? `<div class="blk"><div class="bt">📝 점수 사유 / 감점 내용</div>
+           <div class="reason ${reasonOK?'ok':''}">${esc(a.사유)}</div></div>`
+      : "";
+    return `<div class="round">
+        <h3><span>${esc(a.차수)}</span>
+            <span class="total">총점 <b>${a.총점 ?? "-"}</b>점</span></h3>
+        <table class="sc">${rows}</table>
+        <div class="blk"><div class="bt">✍️ 내가 제출한 답</div>${ans}</div>
+        ${reason}
+      </div>`;
+  }).join("");
+
+  $("result").innerHTML = `
+    <div class="card">
+      <div class="subject">${esc(r.과목)}</div>
+      <div class="who">${esc(r.반)} · <b>${esc(r.이름)}</b></div>
+      ${rounds}
+      <div class="confirm-wrap">
+        <button id="confirmBtn" class="confirm-btn" onclick="confirmCheck()">✅ 확인완료</button>
+        <div id="confirmStat" class="confirm-stat"></div>
+      </div>
+      <div class="notice">📌 문의사항은 수업시간에 하세요.</div>
+    </div>`;
+  $("login").style.display = "none";
+  $("result").style.display = "block";
+  window.scrollTo(0, 0);
+  // 이미 확인완료한 학생이면 버튼 상태 반영
+  const done = localStorage.getItem("confirmed_" + hak);
+  if (done) markConfirmed(done);
+}
+
+function markConfirmed(timeStr) {
+  const btn = $("confirmBtn");
+  if (btn) { btn.textContent = "✔ 확인완료됨"; btn.classList.add("done"); btn.disabled = true; }
+  $("confirmStat").textContent = timeStr + " 확인 기록됨";
+}
+
+async function confirmCheck() {
+  if (!CUR) return;
+  const btn = $("confirmBtn");
+  btn.disabled = true; $("confirmStat").textContent = "기록 중…";
+  const now = new Date();
+  const stamp = now.getFullYear() + "-" +
+    String(now.getMonth()+1).padStart(2,"0") + "-" + String(now.getDate()).padStart(2,"0") + " " +
+    String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0");
+  if (!LOG_URL) { btn.disabled = false; $("confirmStat").textContent = "기록 기능이 아직 설정되지 않았습니다(선생님 문의)."; return; }
+  try {
+    await fetch(LOG_URL, {
+      method: "POST", mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ 학번: CUR.학번, 이름: CUR.이름, 과목: CUR.과목, 확인시각: stamp }),
+    });
+    localStorage.setItem("confirmed_" + CUR.학번, stamp);
+    markConfirmed(stamp);
+  } catch {
+    btn.disabled = false;
+    $("confirmStat").textContent = "기록 전송에 실패했습니다. 다시 눌러 주세요.";
+  }
+}
+
+async function submit() {
+  const hak = $("hak").value.trim();
+  const nm = $("nm").value.trim().normalize("NFC");
+  const pw = $("pw").value.trim();
+  if (!hak || !nm || !pw) { $("msg").textContent = "학번·이름·비밀번호를 모두 입력하세요."; $("msg").className = "msg err"; return; }
+  if (!DB) { await load(); if (!DB) return; }
+  $("go").disabled = true; $("msg").textContent = "확인 중…"; $("msg").className = "msg";
+  try {
+    const rec = await decrypt(hak, nm, pw);
+    if (!rec) throw new Error();
+    render(rec, hak);
+  } catch {
+    $("msg").textContent = "학번·이름·비밀번호가 일치하지 않습니다.";
+    $("msg").className = "msg err";
+  } finally { $("go").disabled = false; }
+}
+
+$("go").addEventListener("click", submit);
+["hak","nm","pw"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") submit(); }));
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# 민감 파일 — 절대 커밋 금지 (혹시 폴더에 들어와도 차단)
+비번명단.xlsx
+passwords.json
+_plain.json
+*.gs
+encrypt.js
+*.csv
